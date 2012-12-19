@@ -10,8 +10,6 @@ import dbusx
 import dbusx.test
 from dbusx.test import test_connection, test_object
 
-import looping
-
 
 # Mixin to use a specific loop
 
@@ -41,9 +39,12 @@ class UseLoop(object):
         parts = cls.loop_module.split('.')
         base = '.'.join(parts[:-1])
         name = parts[-1]
-        mod = __import__(base, globals(), locals(), [name], -1)
-        mod = getattr(mod, name)
-        if not mod.available:
+        try:
+            mod = __import__(base, globals(), locals(), [name], -1)
+            mod = getattr(mod, name)
+        except ImportError:
+            mod = None
+        if mod is None or not mod.available:
             raise dbusx.test.SkipTest('Skipping %s tests (%s not installed)'
                                       % (cls.__name__, name))
         # On purpose use the same loop instance for all tests in a single
