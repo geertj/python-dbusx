@@ -222,7 +222,7 @@ class Object(object):
         nargs = len(dbusx.split_signature(signature))
         if nargs == 0:
             if result is not None:
-                log.error('handler should return None for signature %s ',
+                log.error('handler should return None for signature %s '
                           '(got %s instead)', repr(signature), repr(result))
                 self._error(dbusx.ERROR_FAILED)
             result = ()
@@ -230,7 +230,7 @@ class Object(object):
             result = (result,)
         else:
             if not isinstance(result, tuple):
-                log.error('handler should return tuple for signature %s ',
+                log.error('handler should return tuple for signature %s '
                           '(got %s instead)', repr(signature), repr(result))
                 self._error(dbusx.ERROR_FAILED)
         argtest = dbusx.Message(dbusx.MESSAGE_TYPE_METHOD_RETURN)
