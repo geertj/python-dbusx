@@ -50,6 +50,7 @@ def pkgconfig(*args):
 
 setup(
     package_dir = { '': 'lib' },
+    packages = ['dbusx', 'dbusx.test'],
     ext_modules = [Extension('dbusx._dbus', ['lib/dbusx/_dbus.c'],
               extra_compile_args = pkgconfig('--cflags', 'dbus-1'),
               extra_link_args =  pkgconfig('--libs', 'dbus-1'))],
