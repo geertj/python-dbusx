@@ -1,0 +1,8 @@
+include LICENSE
+include README
+include AUTHORS
+include MANIFEST.in
+include setup.py
+include setup.cfg
+include requirements.txt
+recursive-include lib *.py *.c *.conf
