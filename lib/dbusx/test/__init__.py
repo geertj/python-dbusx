@@ -13,6 +13,7 @@ import re
 import subprocess
 import signal
 import tempfile
+import logging.config
 
 import dbusx
 from nose import SkipTest
@@ -77,3 +78,8 @@ class UnitTest(object):
         if not cls._have_bus_daemon:
             return
         os.kill(cls._bus_daemon_pid, signal.SIGTERM)
+
+
+testdir = os.path.split(__file__)[0]
+logconf = os.path.join(testdir, 'logging.conf')
+logging.config.fileConfig(logconf)
