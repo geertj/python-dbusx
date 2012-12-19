@@ -30,12 +30,22 @@ version_info = {
     ]
 }
 
- 
+
+def check_output(command):
+    """Python 2.6 does not have a subprocess.check_output()."""
+    process = subprocess.Popen(command, stdout=subprocess.PIPE)
+    output, err = process.communicate()
+    status = process.poll()
+    if status:
+        raise RuntimeError('"%s" exited with status %s', (command, status))
+    return output
+
+
 def pkgconfig(*args):
     """Run pkg-config."""
     command = ['pkg-config'] + list(args)
     try:
-        output = subprocess.check_output(command)
+        output = check_output(command)
     except OSError:
         sys.stderr.write('error: command \'%s\' not found\n' % command[0])
         sys.exit(1)

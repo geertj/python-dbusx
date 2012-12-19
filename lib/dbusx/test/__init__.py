@@ -30,6 +30,16 @@ def assert_raises(exc, func, *args, **kwargs):
     raise AssertionError('%s not raised' % exc.__name__)
 
 
+def check_output(command):
+    """Python 2.6 does not have a subprocess.check_output()."""
+    process = subprocess.Popen(command, stdout=subprocess.PIPE)
+    output, err = process.communicate()
+    status = process.poll()
+    if status:
+        raise RuntimeError('"%s" exited with status %s', (command, status))
+    return output
+
+
 class UnitTest(object):
     """Test infrastructure for dbusx tests."""
 
@@ -51,8 +61,8 @@ class UnitTest(object):
         abspath = os.path.abspath(__file__)
         cfgname = os.path.join(os.path.dirname(abspath), 'dbus.conf')
         try:
-            output = subprocess.check_output(['dbus-launch', '--config-file',
-                                              cfgname, '--sh-syntax'])
+            output = check_output(['dbus-launch', '--config-file', cfgname,
+                                   '--sh-syntax'])
         except OSError:
             raise SkipTest('dbus-launch is required for running this test')
         except subprocess.CalledProcessError as e:

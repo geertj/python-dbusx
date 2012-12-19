@@ -160,6 +160,27 @@ error:
     PyInt_Check(arg) ? PyLong_AsUnsignedLong(arg) : PyLong_AsUnsignedLongLong(arg)
 #endif
 
+/* libdbus 1.2 compatibilty... */
+#ifndef DBUS_NUM_MESSAGE_TYPES
+#  define DBUS_NUM_MESSAGE_TYPES 5
+#endif
+#ifndef DBUS_ERROR_UNKNOWN_OBJECT
+#  define DBUS_ERROR_UNKNOWN_OBJECT "org.freedesktop.DBus.Error.UnknownObject"
+#endif
+#ifndef DBUS_ERROR_UNKNOWN_INTERFACE
+#  define DBUS_ERROR_UNKNOWN_INTERFACE "org.freedesktop.DBus.Error.UnknownInterface"
+#endif
+#ifndef DBUS_ERROR_UNKNOWN_PROPERTY
+#  define DBUS_ERROR_UNKNOWN_PROPERTY "org.freedesktop.DBus.Error.UnknownProperty"
+#endif
+#ifndef DBUS_ERROR_PROPERTY_READ_ONLY
+#  define DBUS_ERROR_PROPERTY_READ_ONLY "org.freedesktop.DBus.Error.PropertyReadOnly"
+#endif
+#ifndef DBUS_ERROR_INCONSISTENT_MESSAGE
+#  define DBUS_ERROR_INCONSISTENT_MESSAGE "org.freedesktop.DBus.Error.InconsistentMessage"
+#endif
+
+
 /************************************************************************
  * Utility functions and objects.
  */
@@ -2906,8 +2927,7 @@ MOD_INITFUNC(_dbus)
 
     if ((Pdict = PyModule_GetDict(Pmodule)) == NULL)
         return MOD_ERROR;
-    if ((Error = PyErr_NewExceptionWithDoc("_dbus.Error",
-                    "Base class for dbusx exceptions.", NULL, NULL)) == NULL)
+    if ((Error = PyErr_NewException("_dbus.Error", NULL, NULL)) == NULL)
         return MOD_ERROR;
     if (PyDict_SetItemString(Pdict, "Error", Error) == -1)
         return MOD_ERROR;
