@@ -1,0 +1,18 @@
+environments:
+ - centos6
+ - fedora16
+ - fedora17
+ - ubuntu1204
+
+execute:
+ - nosetests
+
+sysinit:
+  centos6:
+    - "yum -y install dbus-devel dbus-x11"
+  fedora16:
+    - "yum -y install dbus-devel dbus-x11"
+  fedora17:
+    - "yum -y install dbus-devel dbus-x11"
+  ubuntu1204:
+    - "apt-get update && apt-get install libdbus-1-dev"
