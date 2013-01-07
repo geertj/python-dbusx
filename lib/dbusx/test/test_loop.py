@@ -11,8 +11,6 @@ import dbusx.test
 from dbusx.test import test_connection, test_object
 
 
-# Mixin to use a specific loop
-
 class ConnectionWithLoop(dbusx.Connection):
 
     loop_instance = None
@@ -31,81 +29,92 @@ class ConnectionWithLoop(dbusx.Connection):
 
 class UseLoop(object):
 
-    loop_module = None
     Connection = ConnectionWithLoop
+
+    @staticmethod
+    def create_loop(self):
+        raise NotImplementedError
 
     @classmethod
     def setup_class(cls):
-        parts = cls.loop_module.split('.')
-        base = '.'.join(parts[:-1])
-        name = parts[-1]
-        try:
-            mod = __import__(base, globals(), locals(), [name], -1)
-            mod = getattr(mod, name)
-        except ImportError:
-            mod = None
-        if mod is None or not mod.available:
-            raise dbusx.test.SkipTest('Skipping %s tests (%s not installed)'
-                                      % (cls.__name__, name))
         # On purpose use the same loop instance for all tests in a single
         # suite, even if it creates multiple connections. This is something
         # that is supported.
-        cls.Connection.loop_instance = mod.EventLoop()
+        cls.Connection.loop_instance = cls.create_loop()
         super(UseLoop, cls).setup_class()
 
 
-# tulip loop
+# tulip (=pure Python) event loop
+
+def create_tulip_loop():
+    try:
+        import tulip
+    except ImportError:
+        raise dbusx.test.SkipTest('this test requires "tulip"')
+    return tulip.get_event_loop()
 
 class TestConnectionWithTulipLoop(UseLoop, test_connection.TestConnection):
-    loop_module = 'looping.tulip'
+    create_loop = staticmethod(create_tulip_loop)
 
 class TestObjectWithTulipLoop(UseLoop, test_object.TestObject):
-    loop_module = 'looping.tulip'
+    create_loop = staticmethod(create_tulip_loop)
 
 class TestWrappedObjectWithTulipLoop(UseLoop, test_object.TestWrappedObject):
-    loop_module = 'looping.tulip'
-
-
-# PyUV (libuv) loop
-
-class TestConnectionWithPyUVLoop(UseLoop, test_connection.TestConnection):
-    loop_module = 'looping.pyuv'
-
-class TestObjectWithPyUVLoop(UseLoop, test_object.TestObject):
-    loop_module = 'looping.pyuv'
-
-class TestWrappedObjectWithPyUVLoop(UseLoop, test_object.TestWrappedObject):
-    loop_module = 'looping.pyuv'
+    create_loop = staticmethod(create_tulip_loop)
 
 
 # PyEV (libev) loop
 
+def create_pyev_loop():
+    try:
+        import looping.pyev
+    except ImportError:
+        raise dbusx.test.SkipTest('this test requires "pyev"')
+    return looping.pyev.EventLoop()
+
 class TestConnectionWithPyEVLoop(UseLoop, test_connection.TestConnection):
-    loop_module = 'looping.pyev'
+    create_loop = staticmethod(create_pyev_loop)
 
 class TestObjectWithPyEVLoop(UseLoop, test_object.TestObject):
-    loop_module = 'looping.pyev'
+    create_loop = staticmethod(create_pyev_loop)
 
 class TestWrappedObjectWithPyEVLoop(UseLoop, test_object.TestWrappedObject):
-    loop_module = 'looping.pyev'
+    create_loop = staticmethod(create_pyev_loop)
+
+
+# PyUV (libuv) loop
+
+def create_pyuv_loop():
+    try:
+        import looping.pyuv
+    except ImportError:
+        raise dbusx.test.SkipTest('this test requires "pyuv"')
+    return looping.pyuv.EventLoop()
+
+class TestConnectionWithPyUVLoop(UseLoop, test_connection.TestConnection):
+    create_loop = staticmethod(create_pyuv_loop)
+
+class TestObjectWithPyUVLoop(UseLoop, test_object.TestObject):
+    create_loop = staticmethod(create_pyuv_loop)
+
+class TestWrappedObjectWithPyUVLoop(UseLoop, test_object.TestWrappedObject):
+    create_loop = staticmethod(create_pyuv_loop)
 
 
 # PySide (Qt) loop
 
-try:
-    from PySide import QtCore
-except ImportError:
-    pass
-else:
-    import sys
-    qapp = QtCore.QCoreApplication(sys.argv)
+#def create_pyside_loop():
+#    try:
+#        import looping.pyside
+#    except ImportError:
+#        raise dbusx.test.SkipTest('this test requires "PySide"')
+#    return looping.pyside.EventLoop()
 
+#class TestConnectionWithPySideLoop(UseLoop, test_connection.TestConnection):
+#    create_loop = staticmethod(create_pyside_loop)
 
-class TestConnectionWithPySideLoop(UseLoop, test_connection.TestConnection):
-    loop_module = 'looping.pyside'
+#class TestObjectWithPySideLoop(UseLoop, test_object.TestObject):
+#    create_loop = staticmethod(create_pyside_loop)
 
-class TestObjectWithPySideLoop(UseLoop, test_object.TestObject):
-    loop_module = 'looping.pyside'
-
-class TestWrappedObjectWithPySideLoop(UseLoop, test_object.TestWrappedObject):
-    loop_module = 'looping.pyside'
+#class TestWrappedObjectWithPySIdeLoop(UseLoop, test_object.TestWrappedObject):
+#    create_loop = staticmethod(create_pyside_loop)

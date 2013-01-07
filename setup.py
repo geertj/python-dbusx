@@ -66,5 +66,6 @@ setup(
               extra_link_args =  pkgconfig('--libs', 'dbus-1'))],
     requires = ['six'],
     install_requires = ['setuptools'],
+    test_suite = 'nose.collector',
     **version_info
 )

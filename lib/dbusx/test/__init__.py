@@ -90,6 +90,6 @@ class UnitTest(object):
         os.kill(cls._bus_daemon_pid, signal.SIGTERM)
 
 
-testdir = os.path.split(__file__)[0]
-logconf = os.path.join(testdir, 'logging.conf')
-logging.config.fileConfig(logconf)
+#testdir = os.path.split(__file__)[0]
+#logconf = os.path.join(testdir, 'logging.conf')
+#logging.config.fileConfig(logconf)

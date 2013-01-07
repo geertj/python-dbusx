@@ -2429,8 +2429,8 @@ add_timeout_callback(DBusTimeout *timeout, void *data)
         if (Pcallback == NULL)
             RETURN_ERROR(NULL);
         interval = (float) dbus_timeout_get_interval(timeout) / 1000.0;
-        Pdcall = PyObject_CallMethod(loop, "call_later", "ffO", interval,
-                                     interval, Pcallback);
+        Pdcall = PyObject_CallMethod(loop, "call_repeatedly", "fO", interval,
+                                     Pcallback);
         if (Pdcall == NULL)
             RETURN_ERROR(NULL);
         Ptimeout->dcall = Pdcall;
@@ -2488,8 +2488,8 @@ timeout_toggled_callback(DBusTimeout *timeout, void *data)
         if (Pcallback == NULL)
             RETURN_ERROR(NULL);
         interval = (float) dbus_timeout_get_interval(timeout) / 1000.0;
-        Pdcall = PyObject_CallMethod(loop, "call_later", "ffO",
-                                     interval, interval, Pcallback);
+        Pdcall = PyObject_CallMethod(loop, "call_repeatedly", "fO",
+                                     interval, Pcallback);
         if (Pdcall == NULL)
             RETURN_ERROR(NULL);
         Ptimeout->dcall = Pdcall;  /* hand off reference */
@@ -2520,7 +2520,7 @@ connection_set_loop(ConnectionObject *self, PyObject *args)
                 !PyObject_HasAttrString(loop, "remove_reader") ||
                 !PyObject_HasAttrString(loop, "add_writer") ||
                 !PyObject_HasAttrString(loop, "remove_writer") ||
-                !PyObject_HasAttrString(loop, "call_later"))
+                !PyObject_HasAttrString(loop, "call_repeatedly"))
         RETURN_ERROR("expecting an looping.EventLoop like object");
 
     self->loop = INCREF(loop);

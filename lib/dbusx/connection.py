@@ -55,7 +55,7 @@ class Connection(dbusx.ConnectionBase):
 
     def set_loop(self, loop):
         super(Connection, self).set_loop(loop)
-        self._dispatcher = loop.call_soon(True, self.dispatch_all)
+        self._dispatcher = loop.call_every_iteration(self.dispatch_all)
 
     def close(self):
         if self._dispatcher:
