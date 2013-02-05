@@ -6,9 +6,11 @@
 # Copyright (c) 2012 the python-dbusx authors. See the file "AUTHORS" for a
 # complete list.
 
+from nose import SkipTest
+
 import dbusx
-import dbusx.test
-from dbusx.test import test_connection, test_object
+from dbusx.test.test_connection import TestConnection
+from dbusx.test.test_object import TestObject, TestWrappedObject
 
 
 class ConnectionWithLoop(dbusx.Connection):
@@ -39,7 +41,7 @@ class UseLoop(object):
     def setup_class(cls):
         # On purpose use the same loop instance for all tests in a single
         # suite, even if it creates multiple connections. This is something
-        # that is supported.
+        # that is supported and should work.
         cls.Connection.loop_instance = cls.create_loop()
         super(UseLoop, cls).setup_class()
 
@@ -50,16 +52,16 @@ def create_tulip_loop():
     try:
         import tulip
     except ImportError:
-        raise dbusx.test.SkipTest('this test requires "tulip"')
+        raise SkipTest('this test requires "tulip"')
     return tulip.get_event_loop()
 
-class TestConnectionWithTulipLoop(UseLoop, test_connection.TestConnection):
+class TestConnectionWithTulipLoop(UseLoop, TestConnection):
     create_loop = staticmethod(create_tulip_loop)
 
-class TestObjectWithTulipLoop(UseLoop, test_object.TestObject):
+class TestObjectWithTulipLoop(UseLoop, TestObject):
     create_loop = staticmethod(create_tulip_loop)
 
-class TestWrappedObjectWithTulipLoop(UseLoop, test_object.TestWrappedObject):
+class TestWrappedObjectWithTulipLoop(UseLoop, TestWrappedObject):
     create_loop = staticmethod(create_tulip_loop)
 
 
@@ -67,18 +69,20 @@ class TestWrappedObjectWithTulipLoop(UseLoop, test_object.TestWrappedObject):
 
 def create_pyev_loop():
     try:
-        import looping.pyev
+        import looping
     except ImportError:
-        raise dbusx.test.SkipTest('this test requires "pyev"')
-    return looping.pyev.EventLoop()
+        raise SkipTest('this test requires "looping"')
+    if not hasattr(looping, 'PyEVEventLoop'):
+        raise SkipTest('this test requires "pyev"')
+    return looping.PyEVEventLoop()
 
-class TestConnectionWithPyEVLoop(UseLoop, test_connection.TestConnection):
+class TestConnectionWithPyEVLoop(UseLoop, TestConnection):
     create_loop = staticmethod(create_pyev_loop)
 
-class TestObjectWithPyEVLoop(UseLoop, test_object.TestObject):
+class TestObjectWithPyEVLoop(UseLoop, TestObject):
     create_loop = staticmethod(create_pyev_loop)
 
-class TestWrappedObjectWithPyEVLoop(UseLoop, test_object.TestWrappedObject):
+class TestWrappedObjectWithPyEVLoop(UseLoop, TestWrappedObject):
     create_loop = staticmethod(create_pyev_loop)
 
 
@@ -86,35 +90,39 @@ class TestWrappedObjectWithPyEVLoop(UseLoop, test_object.TestWrappedObject):
 
 def create_pyuv_loop():
     try:
-        import looping.pyuv
+        import looping
     except ImportError:
-        raise dbusx.test.SkipTest('this test requires "pyuv"')
-    return looping.pyuv.EventLoop()
+        raise SkipTest('this test requires "looping"')
+    if not hasattr(looping, 'PyUVEventLoop'):
+        raise SkipTest('this test requires "pyuv"')
+    return looping.PyUVEventLoop()
 
-class TestConnectionWithPyUVLoop(UseLoop, test_connection.TestConnection):
+class TestConnectionWithPyUVLoop(UseLoop, TestConnection):
     create_loop = staticmethod(create_pyuv_loop)
 
-class TestObjectWithPyUVLoop(UseLoop, test_object.TestObject):
+class TestObjectWithPyUVLoop(UseLoop, TestObject):
     create_loop = staticmethod(create_pyuv_loop)
 
-class TestWrappedObjectWithPyUVLoop(UseLoop, test_object.TestWrappedObject):
+class TestWrappedObjectWithPyUVLoop(UseLoop, TestWrappedObject):
     create_loop = staticmethod(create_pyuv_loop)
 
 
 # PySide (Qt) loop
 
-#def create_pyside_loop():
-#    try:
-#        import looping.pyside
-#    except ImportError:
-#        raise dbusx.test.SkipTest('this test requires "PySide"')
-#    return looping.pyside.EventLoop()
+def create_pyside_loop():
+    try:
+        import looping
+    except ImportError:
+        raise SkipTest('this test requires "looping"')
+    if not hasattr(looping, 'PySideEventLoop'):
+        raise SkipTest('this test requires "PySide"')
+    return looping.PySideEventLoop()
 
-#class TestConnectionWithPySideLoop(UseLoop, test_connection.TestConnection):
-#    create_loop = staticmethod(create_pyside_loop)
+class TestConnectionWithPySideLoop(UseLoop, TestConnection):
+    create_loop = staticmethod(create_pyside_loop)
 
-#class TestObjectWithPySideLoop(UseLoop, test_object.TestObject):
-#    create_loop = staticmethod(create_pyside_loop)
+class TestObjectWithPySideLoop(UseLoop, TestObject):
+    create_loop = staticmethod(create_pyside_loop)
 
-#class TestWrappedObjectWithPySIdeLoop(UseLoop, test_object.TestWrappedObject):
-#    create_loop = staticmethod(create_pyside_loop)
+class TestWrappedObjectWithPySIdeLoop(UseLoop, TestWrappedObject):
+    create_loop = staticmethod(create_pyside_loop)

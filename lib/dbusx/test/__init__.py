@@ -10,6 +10,7 @@ from __future__ import print_function
 
 import os
 import re
+import gc
 import subprocess
 import signal
 import tempfile
@@ -88,6 +89,7 @@ class UnitTest(object):
         if not cls._have_bus_daemon:
             return
         os.kill(cls._bus_daemon_pid, signal.SIGTERM)
+        gc.collect()
 
 
 #testdir = os.path.split(__file__)[0]

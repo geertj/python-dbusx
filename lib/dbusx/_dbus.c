@@ -3,8 +3,8 @@
  * available under the terms of the MIT license. See the file "LICENSE" that
  * was provided together with this source file for the licensing terms.
  *
- * Copyright (c) 2012 the python-dbusx authors. See the file "AUTHORS" for a
- * complete list.
+ * Copyright (c) 2012-2013 the python-dbusx authors. See the file "AUTHORS"
+ * for a complete list.
  *
  * This file implements the "_dbus" module. It exposes parts of the libdbus
  * API to Python.
@@ -37,43 +37,38 @@ static int slot_self = -1;
  * A few macros to make error handling in Python C extensions less verbose.
  */
 
-#define RETURN_ERROR(fmt, ...) \
+#define RETURN_ERROR() \
+    do { goto error; } while (0)
+
+#define RAISE_ERROR(fmt, ...) \
     do { \
-        if ((fmt) != NULL) PyErr_Format(Error, fmt, ## __VA_ARGS__); \
-        goto error; \
+        PyErr_Format(Error, fmt, ## __VA_ARGS__); \
+        RETURN_ERROR(); \
     } while (0)
 
-#define RETURN_TYPE_ERROR(fmt, ...) \
+#define RAISE_TYPE_ERROR(fmt, ...) \
     do { \
         PyErr_Format(PyExc_TypeError, fmt, ## __VA_ARGS__); \
-        RETURN_ERROR(NULL); \
+        RETURN_ERROR(); \
     } while (0)
 
-#define RETURN_VALUE_ERROR(fmt, ...) \
+#define RAISE_VALUE_ERROR(fmt, ...) \
     do { \
         PyErr_Format(PyExc_ValueError, fmt, ## __VA_ARGS__); \
-        RETURN_ERROR(NULL); \
+        RETURN_ERROR(); \
     } while (0)
 
-#define RETURN_MEMORY_ERROR(err) \
-    do { PyErr_NoMemory(); RETURN_ERROR(NULL); } while (0)
-
-#define RETURN_ERROR_FROM_DBUS(err) \
-    do { \
-        if (dbus_error_is_set(&err)) RETURN_ERROR("dbus: %s", err.message); \
-        else RETURN_ERROR("Unknown error"); \
-    } while (0)
+#define RAISE_MEMORY_ERROR(err) \
+    do { PyErr_NoMemory(); RETURN_ERROR(); } while (0)
 
 #define ASSERT(cond) \
     do { if (!(cond)) { \
-        PyErr_SetString(PyExc_AssertionError, "Assertion failed " #cond); \
-        RETURN_ERROR(NULL); \
+        PyErr_Format(PyExc_AssertionError, "%s:%d: Assertion '%s' failed.", \
+                     __FILE__, __LINE__, #cond ); \
+        RETURN_ERROR(); \
     } } while (0)
 
-#define INCREF(o) (Py_INCREF((PyObject *) o), o)
-#define DECREF_SET_NULL(o) do { Py_DECREF(o); o = NULL; } while (0)
-
-#define PRINT_AND_CLEAR_IF_ERROR(msg) \
+#define PRINT_AND_CLEAR_ERROR(msg) \
     do { if (PyErr_Occurred()) { \
         PySys_WriteStderr("Uncaught exception in " msg ":\n"); \
         PyErr_PrintEx(1); PyErr_Clear(); \
@@ -134,7 +129,7 @@ PyUnicode_AsUTF8(PyObject *obj)
         ret = ptr;
         while (*ptr++) {
             if (*ptr & 0x80)
-                RETURN_ERROR("non-ascii characters in input");
+                RAISE_ERROR("non-ascii characters in input");
         }
     } else
 #endif
@@ -142,10 +137,10 @@ PyUnicode_AsUTF8(PyObject *obj)
         if (Pbytes != NULL)
             Py_DECREF(Pbytes);
         if ((Pbytes = PyUnicode_AsUTF8String(obj)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         ret = PyBytes_AsString(Pbytes);
     } else
-        RETURN_ERROR("expecting string input");
+        RAISE_ERROR("expecting string input");
     return ret;
 
 error:
@@ -309,7 +304,7 @@ get_one_full_type(char *signature)
             else if (*end == endtype) depth--;
         }
         if (depth)
-            RETURN_ERROR("unbalanced `%c' format", *signature);
+            RAISE_ERROR("unbalanced `%c' format", *signature);
     }
     return end;
 
@@ -381,11 +376,11 @@ init_check_number_cache(void)
     PyObject *Pnumber;
 
     if ((check_number_cache = calloc(11, sizeof(PyObject *))) == NULL)
-        RETURN_MEMORY_ERROR();
+        RAISE_MEMORY_ERROR();
     for (i=0; i<11; i++) {
         Pnumber = PyLong_FromString(check_numbers[i], NULL, 0);
         if (Pnumber == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         check_number_cache[i] = Pnumber;
     }
     return 1;
@@ -406,7 +401,7 @@ check_number(PyObject *number, int type)
     PyObject *Pmin,  *Pmax;
 
     if (!PyLong_Check(number))
-        RETURN_TYPE_ERROR("expecting integer argument for `%c' format", type);
+        RAISE_TYPE_ERROR("expecting integer argument for `%c' format", type);
 
     switch (type) {
     case DBUS_TYPE_BYTE:
@@ -443,7 +438,7 @@ check_number(PyObject *number, int type)
 
     if (PyObject_RichCompareBool(number, Pmin, Py_LT) == 1 ||
                 PyObject_RichCompareBool(number, Pmax, Py_GT) == 1)
-        RETURN_VALUE_ERROR("value out of range for `%c' format", type);
+        RAISE_VALUE_ERROR("value out of range for `%c' format", type);
     return 1;
 
 error:
@@ -486,17 +481,27 @@ watch_traverse(WatchObject *self, visitproc visit, void *arg)
 static int
 watch_clear(WatchObject *self)
 {
-    if (self->reader != NULL) 
-        DECREF_SET_NULL(self->reader);
-    if (self->writer != NULL)
-        DECREF_SET_NULL(self->writer);
+    PyObject *Ptmp;
+    
+    Ptmp = self->reader;
+    if (Ptmp != NULL) {
+        self->reader = NULL;
+        Py_DECREF(Ptmp);
+    }
+    Ptmp = self->writer;
+    if (Ptmp != NULL) {
+        self->writer = NULL;
+        Py_DECREF(Ptmp);
+    }
+
     return 0;
 }
 
 static void
 watch_dealloc(WatchObject *self)
 {
-    watch_clear(self);
+    if (self->reader != NULL)
+        watch_clear(self);
     Py_TYPE(self)->tp_free(self);
 }
 
@@ -515,7 +520,7 @@ watch_handle(WatchObject *self, PyObject *args)
         return NULL;
 
     if (dbus_watch_handle(self->watch, flags) == FALSE)
-        RETURN_MEMORY_ERROR();
+        RAISE_MEMORY_ERROR();
 
     Py_RETURN_NONE;
 
@@ -553,7 +558,7 @@ typedef struct
 {
     PyObject_HEAD
     DBusTimeout *timeout;
-    PyObject *dcall;
+    PyObject *timer;
 } TimeoutObject;
 
 static PyTypeObject TimeoutType =
@@ -569,23 +574,30 @@ PyDoc_STRVAR(timeout_doc,
 static int
 timeout_traverse(TimeoutObject *self, visitproc visit, void *arg)
 {
-    if (self->dcall)
-        Py_VISIT(self->dcall);
+    if (self->timer)
+        Py_VISIT(self->timer);
     return 0;
 }
 
 static int
 timeout_clear(TimeoutObject *self)
 {
-    if (self->dcall)
-        DECREF_SET_NULL(self->dcall);
+    PyObject *Ptmp;
+
+    Ptmp = self->timer;
+    if (Ptmp != NULL) {
+        self->timer = NULL;
+        Py_DECREF(Ptmp);
+    }
+
     return 0;
 }
 
 static void
 timeout_dealloc(TimeoutObject *self)
 {
-    timeout_clear(self);
+    if (self->timer != NULL)
+        timeout_clear(self);
     Py_TYPE(self)->tp_free(self);
 }
 
@@ -600,9 +612,9 @@ timeout_handle(TimeoutObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, ":handle"))
         return NULL;
 
-    ASSERT(self->dcall != NULL);
+    ASSERT(self->timer != NULL);
     if (!dbus_timeout_handle(self->timeout))
-        RETURN_MEMORY_ERROR();
+        RAISE_MEMORY_ERROR();
 
     Py_RETURN_NONE;
 
@@ -667,9 +679,9 @@ message_init(MessageObject *self, PyObject *args, PyObject *kwargs)
         return -1;
 
     if (type <= DBUS_MESSAGE_TYPE_INVALID || type >= DBUS_NUM_MESSAGE_TYPES)
-        RETURN_VALUE_ERROR("illegal message type: %d", type);
+        RAISE_VALUE_ERROR("illegal message type: %d", type);
     if ((self->message = dbus_message_new(type)) == NULL)
-        RETURN_MEMORY_ERROR();
+        RAISE_MEMORY_ERROR();
     return 0;
 
 error:
@@ -697,7 +709,7 @@ static PyObject *
 message_get_type(MessageObject *self, void *context)
 {
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     return PyLong_FromLong(dbus_message_get_type(self->message));
 error:
     return NULL;
@@ -710,7 +722,7 @@ static PyObject *
 message_get_no_reply(MessageObject *self, void *context)
 {
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     return PyBool_FromLong(dbus_message_get_no_reply(self->message));
 error:
     return NULL;
@@ -721,9 +733,9 @@ message_set_no_reply(MessageObject *self, PyObject *value,
                             void *context)
 {
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if (!PyLong_Check(value))
-        RETURN_TYPE_ERROR("expecting an integer");
+        RAISE_TYPE_ERROR("expecting an integer");
     dbus_message_set_no_reply(self->message,
                               (dbus_bool_t) PyLong_AsLong(value));
     return 0;
@@ -738,7 +750,7 @@ static PyObject *
 message_get_no_auto_start(MessageObject *self, void *context)
 {
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     return PyBool_FromLong(!dbus_message_get_auto_start(self->message));
 error:
     return NULL;
@@ -749,9 +761,9 @@ message_set_no_auto_start(MessageObject *self, PyObject *value,
                           void *context)
 {
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if (!PyLong_Check(value))
-        RETURN_TYPE_ERROR("expecting an integer");
+        RAISE_TYPE_ERROR("expecting an integer");
     dbus_message_set_auto_start(self->message, !PyLong_AsLong(value));
     return 0;
 error:
@@ -767,7 +779,7 @@ message_get_serial(MessageObject *self, void *context)
 {
     unsigned long serial;
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if ((serial = dbus_message_get_serial(self->message)) != 0)
         return PyLong_FromUnsignedLong(serial);
     Py_RETURN_NONE;
@@ -782,13 +794,13 @@ message_set_serial(MessageObject *self, PyObject *value,
     unsigned long serial;
 
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if (!PyLong_Check(value))
-        RETURN_TYPE_ERROR("expecting an integer");
+        RAISE_TYPE_ERROR("expecting an integer");
     if (!check_number(value, 'u'))
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     if ((serial = PyLong_AsUnsignedLong(value)) == 0)
-        RETURN_VALUE_ERROR("serial must be > 0");
+        RAISE_VALUE_ERROR("serial must be > 0");
     dbus_message_set_serial(self->message, (dbus_uint32_t) serial);
     return 0;
 error:
@@ -804,7 +816,7 @@ message_get_reply_serial(MessageObject *self, void *context)
 {
     unsigned long reply_serial;
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if ((reply_serial = dbus_message_get_reply_serial(self->message)) != 0)
         return PyLong_FromLong(reply_serial);
     Py_RETURN_NONE;
@@ -820,13 +832,13 @@ message_set_reply_serial(MessageObject *self, PyObject *value,
     unsigned long serial;
 
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if (!PyLong_Check(value))
-        RETURN_TYPE_ERROR("expecting an integer");
+        RAISE_TYPE_ERROR("expecting an integer");
     if (!check_number(value, 'u'))
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     if ((serial = PyLong_AsUnsignedLong(value)) == 0)
-        RETURN_VALUE_ERROR("reply_serial must be > 0");
+        RAISE_VALUE_ERROR("reply_serial must be > 0");
     dbus_message_set_reply_serial(self->message, (dbus_uint32_t) serial);
     return 0;
 error:
@@ -841,7 +853,7 @@ message_get_path(MessageObject *self, void *context)
 {
     const char *path;
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if ((path = dbus_message_get_path(self->message)) != NULL)
         return PyUnicode_FromString(path);
     Py_RETURN_NONE;
@@ -855,15 +867,15 @@ message_set_path(MessageObject *self, PyObject *value,
 {
     const char *path;
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if (!PyUnicode_Check(value))
-        RETURN_TYPE_ERROR("'path': expecting a string");
+        RAISE_TYPE_ERROR("'path': expecting a string");
     if ((path = PyUnicode_AsUTF8(value)) == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     if (!_check_path(path))
-        RETURN_VALUE_ERROR("'path': illegal path");
+        RAISE_VALUE_ERROR("'path': illegal path");
     if (!dbus_message_set_path(self->message, path))
-        RETURN_MEMORY_ERROR();
+        RAISE_MEMORY_ERROR();
     return 0;
 error:
     return -1;
@@ -877,7 +889,7 @@ message_get_interface(MessageObject *self, void *context)
 {
     const char *interface;
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if ((interface = dbus_message_get_interface(self->message)) != NULL)
         return PyUnicode_FromString(interface);
     Py_RETURN_NONE;
@@ -891,15 +903,15 @@ message_set_interface(MessageObject *self, PyObject *value,
 {
     const char *interface;
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if (!PyUnicode_Check(value))
-        RETURN_TYPE_ERROR("'interface': expecting a string");
+        RAISE_TYPE_ERROR("'interface': expecting a string");
     if ((interface = PyUnicode_AsUTF8(value)) == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     if (!_check_interface(interface))
-        RETURN_VALUE_ERROR("'interface': illegal interface");
+        RAISE_VALUE_ERROR("'interface': illegal interface");
     if (!dbus_message_set_interface(self->message, interface))
-        RETURN_MEMORY_ERROR();
+        RAISE_MEMORY_ERROR();
     return 0;
 error:
     return -1;
@@ -913,7 +925,7 @@ message_get_member(MessageObject *self, void *context)
 {
     const char *member;
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if ((member = dbus_message_get_member(self->message)) != NULL)
         return PyUnicode_FromString(member);
     Py_RETURN_NONE;
@@ -927,15 +939,15 @@ message_set_member(MessageObject *self, PyObject *value,
 {
     const char *member;
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if (!PyUnicode_Check(value))
-        RETURN_TYPE_ERROR("'member': expecting a string");
+        RAISE_TYPE_ERROR("'member': expecting a string");
     if ((member = PyUnicode_AsUTF8(value)) == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     if (!_check_member(member))
-        RETURN_VALUE_ERROR("'interface': illegal interface");
+        RAISE_VALUE_ERROR("'interface': illegal interface");
     if (!dbus_message_set_member(self->message, member))
-        RETURN_MEMORY_ERROR();
+        RAISE_MEMORY_ERROR();
     return 0;
 error:
     return -1;
@@ -949,7 +961,7 @@ message_get_error_name(MessageObject *self, void *context)
 {
     const char *error_name;
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if ((error_name = dbus_message_get_error_name(self->message)) != NULL)
         return PyUnicode_FromString(error_name);
     Py_RETURN_NONE;
@@ -963,15 +975,15 @@ message_set_error_name(MessageObject *self, PyObject *value,
 {
     const char *error_name;
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if (!PyUnicode_Check(value))
-        RETURN_TYPE_ERROR("'error_name': expecting a string");
+        RAISE_TYPE_ERROR("'error_name': expecting a string");
     if ((error_name = PyUnicode_AsUTF8(value)) == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     if (!_check_interface(error_name))
-        RETURN_VALUE_ERROR("'error_name': illegal error name");
+        RAISE_VALUE_ERROR("'error_name': illegal error name");
     if (!dbus_message_set_error_name(self->message, error_name))
-        RETURN_MEMORY_ERROR();
+        RAISE_MEMORY_ERROR();
     return 0;
 error:
     return -1;
@@ -986,7 +998,7 @@ message_get_sender(MessageObject *self, void *context)
 {
     const char *sender;
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if ((sender = dbus_message_get_sender(self->message)) != NULL)
         return PyUnicode_FromString(sender);
     Py_RETURN_NONE;
@@ -1000,15 +1012,15 @@ message_set_sender(MessageObject *self, PyObject *value,
 {
     const char *sender;
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if (!PyUnicode_Check(value))
-        RETURN_TYPE_ERROR("'sender': expecting a string");
+        RAISE_TYPE_ERROR("'sender': expecting a string");
     if ((sender = PyUnicode_AsUTF8(value)) == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     if (!_check_bus_name(sender))
-        RETURN_VALUE_ERROR("illegal sender: %s", sender);
+        RAISE_VALUE_ERROR("illegal sender: %s", sender);
     if (!dbus_message_set_sender(self->message, sender))
-        RETURN_MEMORY_ERROR();
+        RAISE_MEMORY_ERROR();
     return 0;
 error:
     return -1;
@@ -1022,7 +1034,7 @@ message_get_destination(MessageObject *self, void *context)
 {
     const char *destination;
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if ((destination = dbus_message_get_destination(self->message)) != NULL)
         return PyUnicode_FromString(destination);
     Py_RETURN_NONE;
@@ -1036,15 +1048,15 @@ message_set_destination(MessageObject *self, PyObject *value,
 {
     const char *destination;
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if (!PyUnicode_Check(value))
-        RETURN_TYPE_ERROR("'destination': expecting a string");
+        RAISE_TYPE_ERROR("'destination': expecting a string");
     if ((destination = PyUnicode_AsUTF8(value)) == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     if (!_check_bus_name(destination))
-        RETURN_VALUE_ERROR("illegal destination: %s", destination);
+        RAISE_VALUE_ERROR("illegal destination: %s", destination);
     if (!dbus_message_set_destination(self->message, destination))
-        RETURN_MEMORY_ERROR();
+        RAISE_MEMORY_ERROR();
     return 0;
 error:
     return -1;
@@ -1059,7 +1071,7 @@ message_get_signature(MessageObject *self, void *context)
 {
     const char *signature;
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized message");
+        RAISE_ERROR("uninitialized message");
     if ((signature = dbus_message_get_signature(self->message)) != NULL)
         return PyUnicode_FromString(signature);
     Py_RETURN_NONE;
@@ -1108,63 +1120,63 @@ message_read_arg(DBusMessageIter *iter, int depth)
     case DBUS_TYPE_BYTE:
         dbus_message_iter_get_basic(iter, &value);
         if ((Parg = PyLong_FromLong(value.u8)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         break;
     case DBUS_TYPE_BOOLEAN:
         dbus_message_iter_get_basic(iter, &value);
         if ((Parg = PyBool_FromLong(value.bl)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         break;
     case DBUS_TYPE_INT16:
         dbus_message_iter_get_basic(iter, &value);
         if ((Parg = PyLong_FromLong(value.i16)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         break;
     case DBUS_TYPE_UINT16:
         dbus_message_iter_get_basic(iter, &value);
         if ((Parg = PyLong_FromLong(value.u16)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         break;
     case DBUS_TYPE_INT32:
         dbus_message_iter_get_basic(iter, &value);
         if ((Parg = PyLong_FromLong(value.i32)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         break;
     case DBUS_TYPE_UINT32:
         dbus_message_iter_get_basic(iter, &value);
         if ((Parg = PyLong_FromUnsignedLong(value.u32)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         break;
     case DBUS_TYPE_INT64:
         dbus_message_iter_get_basic(iter, &value);
         if ((Parg = PyLong_FromLongLong(value.i64)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         break;
     case DBUS_TYPE_UINT64:
         dbus_message_iter_get_basic(iter, &value);
         if ((Parg = PyLong_FromUnsignedLongLong(value.u64)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         break;
     case DBUS_TYPE_DOUBLE:
         dbus_message_iter_get_basic(iter, &value);
         if ((Parg = PyFloat_FromDouble(value.dbl)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         break;
     case DBUS_TYPE_STRING:
         dbus_message_iter_get_basic(iter, &value);
         if ((Parg = PyUnicode_FromString(value.str)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         break;
     case DBUS_TYPE_OBJECT_PATH:
     case DBUS_TYPE_SIGNATURE:
         dbus_message_iter_get_basic(iter, &value);
         if ((Parg = PyUnicode_FromString(value.str)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         break;
     case DBUS_TYPE_STRUCT:
         dbus_message_iter_recurse(iter, &subiter);
         if ((Parg = message_read_args(&subiter, depth+1)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         break;
     case DBUS_TYPE_ARRAY:
         subtype = dbus_message_iter_get_element_type(iter);
@@ -1172,23 +1184,23 @@ message_read_arg(DBusMessageIter *iter, int depth)
         if (subtype == DBUS_TYPE_BYTE) {
             dbus_message_iter_get_fixed_array(&subiter, &ptr, &size);
             if ((Parg = PyBytes_FromStringAndSize(ptr, size)) == NULL)
-                RETURN_ERROR(NULL);
+                RETURN_ERROR();
         } else {
             if (subtype == DBUS_TYPE_DICT_ENTRY)
                 Parg = PyDict_New();
             else
                 Parg = PyList_New(0);
             if (Parg == NULL)
-                RETURN_ERROR(NULL);
+                RETURN_ERROR();
             while (dbus_message_iter_get_arg_type(&subiter) != DBUS_TYPE_INVALID) {
                 if ((Pitem = message_read_arg(&subiter, depth+1)) == NULL)
-                    RETURN_ERROR(NULL);
+                    RETURN_ERROR();
                 if (PyDict_Check(Parg)) {
                     ASSERT(PyTuple_Check(Pitem));
                     ASSERT(PyTuple_Size(Pitem) == 2);
                     if (PyDict_SetItem(Parg, PyTuple_GET_ITEM(Pitem, 0),
                                        PyTuple_GET_ITEM(Pitem, 1)) < 0)
-                        RETURN_ERROR(NULL);
+                        RETURN_ERROR();
                 } else
                     PyList_Append(Parg, Pitem);
                 Py_DECREF(Pitem); Pitem = NULL;
@@ -1199,26 +1211,26 @@ message_read_arg(DBusMessageIter *iter, int depth)
     case DBUS_TYPE_DICT_ENTRY:
         dbus_message_iter_recurse(iter, &subiter);
         if ((Pkey = message_read_arg(&subiter, depth+1)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         if (!dbus_message_iter_next(&subiter))
-            RETURN_ERROR("illegal dict_entry");
+            RAISE_ERROR("illegal dict_entry");
         if ((Pvalue = message_read_arg(&subiter, depth+1)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         if ((Parg = PyTuple_New(2)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         PyTuple_SET_ITEM(Parg, 0, Pkey);
         PyTuple_SET_ITEM(Parg, 1, Pvalue);
         break;
     case DBUS_TYPE_VARIANT:
         dbus_message_iter_recurse(iter, &subiter);
         if ((sig = dbus_message_iter_get_signature(&subiter)) == NULL)
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         if ((Pkey = PyUnicode_FromString(sig)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         if ((Pvalue = message_read_arg(&subiter, depth+1)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         if ((Parg = PyTuple_New(2)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         PyTuple_SET_ITEM(Parg, 0, Pkey);
         PyTuple_SET_ITEM(Parg, 1, Pvalue);
         dbus_free(sig); sig = NULL;
@@ -1244,15 +1256,15 @@ message_read_args(DBusMessageIter *iter, int depth)
     Plist = PyList_New(0);
     while (dbus_message_iter_get_arg_type(iter) != DBUS_TYPE_INVALID) {
         if ((Parg = message_read_arg(iter, depth)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         if (PyList_Append(Plist, Parg) < 0)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         Py_DECREF(Parg); Parg = NULL;
         dbus_message_iter_next(iter);
     }
 
     if ((Pargs = PyList_AsTuple(Plist)) == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     Py_DECREF(Plist);
     return Pargs;
 
@@ -1274,13 +1286,13 @@ message_get_args(MessageObject *self, void *context)
     DBusMessageIter iter;
     
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized object");
+        RAISE_ERROR("uninitialized object");
     if (dbus_message_iter_init(self->message, &iter))
         Pargs = message_read_args(&iter, 0);
     else
         Pargs = PyTuple_New(0);
     if (Pargs == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     return Pargs;
 
 error:
@@ -1340,183 +1352,183 @@ message_append_arg(DBusMessageIter *iter, char *signature,
     switch (*signature) {
     case DBUS_TYPE_BYTE:
         if (!check_number(arg, *signature))
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         value.u8 = PyLong_AsLong(arg);
         if (!dbus_message_iter_append_basic(iter, *signature, &value))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         break;
     case DBUS_TYPE_BOOLEAN:
         if ((l = PyObject_IsTrue(arg)) == -1)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         value.bl = (dbus_bool_t) l;
         if (!dbus_message_iter_append_basic(iter, *signature, &value))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         break;
     case DBUS_TYPE_INT16:
         if (!check_number(arg, *signature))
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         value.i16 = PyLong_AsLong(arg);
         if (!dbus_message_iter_append_basic(iter, *signature, &value))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         break;
     case DBUS_TYPE_UINT16:
         if (!check_number(arg, *signature))
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         value.u16 = PyLong_AsLong(arg);
         if (!dbus_message_iter_append_basic(iter, *signature, &value))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         break;
     case DBUS_TYPE_INT32:
         if (!check_number(arg, *signature))
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         value.i32 = (dbus_int32_t) PyLong_AsLong(arg);
         if (!dbus_message_iter_append_basic(iter, *signature, &value))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         break;
     case DBUS_TYPE_UINT32:
         if (!check_number(arg, *signature))
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         value.u32 = (dbus_uint32_t) PyLong_AsUnsignedLongMask(arg);
         if (!dbus_message_iter_append_basic(iter, *signature, &value))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         break;
     case DBUS_TYPE_INT64:
         if (!check_number(arg, *signature))
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         value.i64 = (dbus_int64_t) PyLong_AsLongLong(arg);
         if (!dbus_message_iter_append_basic(iter, *signature, &value))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         break;
     case DBUS_TYPE_UINT64:
         if (!check_number(arg, *signature))
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         value.u64 = (dbus_uint64_t) (PyLong_AsUnsignedLongLong(arg));
         if (!dbus_message_iter_append_basic(iter, *signature, &value))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         break;
     case DBUS_TYPE_DOUBLE:
         value.dbl = PyFloat_AsDouble(arg);
         if (PyErr_Occurred())
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         if (!dbus_message_iter_append_basic(iter, *signature, &value))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         break;
     case DBUS_TYPE_OBJECT_PATH:
         if (!PyUnicode_Check(arg))
-            RETURN_TYPE_ERROR("expecting str for `%c' format", *signature);
+            RAISE_TYPE_ERROR("expecting str for `%c' format", *signature);
         if ((value.str = PyUnicode_AsUTF8(arg)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         if (!_check_path(value.str))
-            RETURN_VALUE_ERROR("invalid object path argument");
+            RAISE_VALUE_ERROR("invalid object path argument");
         if (!dbus_message_iter_append_basic(iter, *signature, &value))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         break;
     case DBUS_TYPE_SIGNATURE:
         if (!PyUnicode_Check(arg))
-            RETURN_TYPE_ERROR("expecting str for `%c' format", *signature);
+            RAISE_TYPE_ERROR("expecting str for `%c' format", *signature);
         if ((value.str = PyUnicode_AsUTF8(arg)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         if (!_check_signature(value.str, 0, 0))
-            RETURN_VALUE_ERROR("invalid signature");
+            RAISE_VALUE_ERROR("invalid signature");
         if (!dbus_message_iter_append_basic(iter, *signature, &value))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         break;
     case DBUS_TYPE_STRING:
         if (!PyUnicode_Check(arg))
-            RETURN_TYPE_ERROR("expecting str for `%c' format", *signature);
+            RAISE_TYPE_ERROR("expecting str for `%c' format", *signature);
         if ((value.str = PyUnicode_AsUTF8(arg)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         if (!dbus_message_iter_append_basic(iter, *signature, &value))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         break;
     case DBUS_STRUCT_BEGIN_CHAR:
         if (!dbus_message_iter_open_container(iter, DBUS_TYPE_STRUCT,
                     NULL, &subiter))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         if (!PySequence_Check(arg))
-            RETURN_TYPE_ERROR("expecting sequence argument for struct format");
+            RAISE_TYPE_ERROR("expecting sequence argument for struct format");
         if (!message_append_args(&subiter, signature+1, arg, depth+1))
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         if (!dbus_message_iter_close_container(iter, &subiter))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         break;
     case DBUS_TYPE_ARRAY:
         if (!dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY,
                     signature+1, &subiter))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         if (signature[1] == DBUS_TYPE_BYTE) {
             if (!PyBytes_Check(arg))
-                RETURN_TYPE_ERROR("expecting bytes argument for array of byte");
+                RAISE_TYPE_ERROR("expecting bytes argument for array of byte");
             ptr = PyBytes_AS_STRING(arg); size = (int) PyBytes_GET_SIZE(arg);
             if (!dbus_message_iter_append_fixed_array(&subiter, signature[1], &ptr, size))
-                RETURN_MEMORY_ERROR();
+                RAISE_MEMORY_ERROR();
         } else {
             if (signature[1] == DBUS_DICT_ENTRY_BEGIN_CHAR) {
                 if (!PyDict_Check(arg))
-                    RETURN_TYPE_ERROR("expecting dict argument for dict format");
+                    RAISE_TYPE_ERROR("expecting dict argument for dict format");
                 Parray = PyDict_Items(arg);
             } else {
                 if (!PySequence_Check(arg))
-                    RETURN_TYPE_ERROR("expecting sequence argument for array format");
+                    RAISE_TYPE_ERROR("expecting sequence argument for array format");
                 Parray = arg;
             }
             for (i=0; i<PySequence_Size(Parray); i++) {
                 Pitem = PySequence_GetItem(Parray, i);
                 if (!message_append_arg(&subiter, signature+1, Pitem, depth+1))
-                    RETURN_ERROR(NULL);
+                    RETURN_ERROR();
                 Py_DECREF(Pitem); Pitem = NULL;
             }
             if (Parray != arg)
                 Py_DECREF(Parray);
         }
         if (!dbus_message_iter_close_container(iter, &subiter))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         break;
     case DBUS_DICT_ENTRY_BEGIN_CHAR:
         if (!dbus_message_iter_open_container(iter, DBUS_TYPE_DICT_ENTRY,
                     NULL, &subiter))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         if (!PySequence_Check(arg))
-            RETURN_TYPE_ERROR("expecting sequence argument for dict_entry format");
+            RAISE_TYPE_ERROR("expecting sequence argument for dict_entry format");
         if (!message_append_args(&subiter, signature+1, arg, depth+1))
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         if (!dbus_message_iter_close_container(iter, &subiter))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         break;
     case DBUS_TYPE_VARIANT:
         if (!PySequence_Check(arg))
-            RETURN_TYPE_ERROR("expecting a sequence for variant");
+            RAISE_TYPE_ERROR("expecting a sequence for variant");
         if (PySequence_Size(arg) != 2)
-            RETURN_VALUE_ERROR("expecting a sequence of length 2 for variant");
+            RAISE_VALUE_ERROR("expecting a sequence of length 2 for variant");
         Ptype = PySequence_GetItem(arg, 0);
         Pvalue = PySequence_GetItem(arg, 1);
         if (!PyUnicode_Check(Ptype))
-            RETURN_TYPE_ERROR("first item in sequence for variant must be string");
+            RAISE_TYPE_ERROR("first item in sequence for variant must be string");
         if ((ptr = PyUnicode_AsUTF8(Ptype)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         /* On Python < 3.2, we provide our own version of PyUnicode_AsUTF8.
          * That version uses a single static PyObject to hold the return
          * value. As we recurse into ourselves here, this will not work and
          * we therefore need to copy the UTF8 buffer. */
         if ((subtype = strdup(ptr)) == NULL)
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         if (!_check_signature(subtype, 0, 0))
-            RETURN_VALUE_ERROR("invalid signature for variant");
+            RAISE_VALUE_ERROR("invalid signature for variant");
         end = get_one_full_type(subtype);
         if (end == NULL || *end != '\000')
-            RETURN_VALUE_ERROR("variant signature must be exactly one full type");
+            RAISE_VALUE_ERROR("variant signature must be exactly one full type");
         if (!dbus_message_iter_open_container(iter, *signature, subtype, &subiter))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         if (!message_append_arg(&subiter, subtype, Pvalue, depth+1))
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         if (!dbus_message_iter_close_container(iter, &subiter))
-            RETURN_MEMORY_ERROR();
+            RAISE_MEMORY_ERROR();
         Py_DECREF(Ptype); Ptype = NULL;
         Py_DECREF(Pvalue); Pvalue = NULL;
         free(subtype); subtype = NULL;
         break;
     default:
-        RETURN_ERROR("unknown format character `%c'", *signature);
+        RAISE_ERROR("unknown format character `%c'", *signature);
     }
     return 1;
 
@@ -1538,20 +1550,20 @@ message_append_args(DBusMessageIter *iter, char *signature,
 
     while (*signature != '\000') {
         if ((end = get_one_full_type(signature)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         if (curarg == PySequence_Size(args))
-            RETURN_TYPE_ERROR("too few arguments for signature string");
+            RAISE_TYPE_ERROR("too few arguments for signature string");
         store = *end; *end = '\000';
         Parg = PySequence_GetItem(args, curarg++);
         if (!message_append_arg(iter, signature, Parg, depth))
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         Py_DECREF(Parg); Parg = NULL;
         *(signature = end) = store;
         if (*signature == DBUS_STRUCT_END_CHAR || *signature == DBUS_DICT_ENTRY_END_CHAR)
             signature++;
     }
     if (curarg != PySequence_Size(args))
-        RETURN_TYPE_ERROR("too many arguments for signature string");
+        RAISE_TYPE_ERROR("too many arguments for signature string");
     return 1;
 
 error:
@@ -1575,19 +1587,19 @@ message_set_args(MessageObject *self, PyObject *args)
     PyObject *Pargs;
 
     if (self->message == NULL)
-        RETURN_ERROR("uninitialized object");
+        RAISE_ERROR("uninitialized object");
     if (!PyArg_ParseTuple(args, "sO:set_args", &signature, &Pargs))
         return NULL;
     if (!PySequence_Check(Pargs))
-        RETURN_TYPE_ERROR("expecting a sequence for the arguments");
+        RAISE_TYPE_ERROR("expecting a sequence for the arguments");
     if ((ptr = strdup(signature)) == NULL)
-        RETURN_MEMORY_ERROR();
+        RAISE_MEMORY_ERROR();
     if (!_check_signature(ptr, 0, 0))
-        RETURN_VALUE_ERROR("illegal signature");
+        RAISE_VALUE_ERROR("illegal signature");
 
     dbus_message_iter_init_append(self->message, &iter);
     if (!message_append_args(&iter, ptr, Pargs, 0))
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
 
     free(ptr);
     Py_RETURN_NONE;
@@ -1635,6 +1647,7 @@ typedef struct
     PyObject *loop;
     PyObject *filters;
     PyObject *object_paths;
+    PyObject *dispatch;
 } ConnectionObject;
 
 PyTypeObject ConnectionType =
@@ -1663,16 +1676,17 @@ connection_new(PyTypeObject *type, PyObject *args, PyObject *kwargs)
 
     if ((Pconnection = (ConnectionObject *)
                 PyType_GenericNew(type, args, kwargs)) == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     if ((Pconnection->filters = PySet_New(NULL)) == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     if ((Pconnection->object_paths = PyDict_New()) == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     return (PyObject *) Pconnection;
 
 error:
     return NULL;
 }
+
 
 static int
 connection_init(ConnectionObject *self, PyObject *args, PyObject *kwargs)
@@ -1682,16 +1696,16 @@ connection_init(ConnectionObject *self, PyObject *args, PyObject *kwargs)
     DBusConnection *connection;
 
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O", kwlist, &bus))
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
 
     /* See note in connection_get() */
     if (self->skip_connect)
         return 0;
 
     if ((connection = _open_connection(bus, 0)) == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     if (!dbus_connection_set_data(connection, slot_self, self, decref))
-        RETURN_ERROR("dbus_connection_set_data() failed");
+        RAISE_ERROR("dbus_connection_set_data() failed");
 
     /* Account for the reference that DBusConnection has to to us. This
      * reference will prevent the connection from being garbage collected,
@@ -1704,7 +1718,8 @@ connection_init(ConnectionObject *self, PyObject *args, PyObject *kwargs)
 
     self->connection = connection;
     self->shared = 0;
-    self->address = INCREF(bus);
+    Py_INCREF(bus);
+    self->address = bus;
 
     return 0;
 
@@ -1712,15 +1727,6 @@ error:
     return -1;
 }
 
-static void
-connection_dealloc(ConnectionObject *self)
-{
-    _close_connection(self);
-    DECREF_SET_NULL(self->filters);
-    DECREF_SET_NULL(self->object_paths);
-
-    Py_TYPE(self)->tp_free(self);
-}
 
 static int
 connection_traverse(ConnectionObject *self, visitproc visit, void *arg)
@@ -1731,14 +1737,49 @@ connection_traverse(ConnectionObject *self, visitproc visit, void *arg)
         Py_VISIT(self->filters);
     if (self->object_paths != NULL)
         Py_VISIT(self->object_paths);
+    if (self->dispatch != NULL)
+        Py_VISIT(self->dispatch);
     return 0;
 }
+
 
 static int
 connection_clear(ConnectionObject *self)
 {
+    PyObject *Ptmp, *Pret;
+
     _close_connection(self);
+
+    Ptmp = self->filters;
+    if (Ptmp != NULL) {
+        self->filters = NULL;
+        Py_DECREF(Ptmp);
+    }
+    Ptmp = self->object_paths;
+    if (Ptmp != NULL) {
+        self->object_paths = NULL;
+        Py_DECREF(Ptmp);
+    }
+    Ptmp = self->dispatch;
+    if (Ptmp != NULL) {
+        self->dispatch = NULL;
+        Pret = PyObject_CallMethod(Ptmp, "cancel", NULL);
+        if (PyErr_Occurred())
+            PyErr_Clear();
+        Py_XDECREF(Pret);
+        Py_DECREF(Ptmp);
+    }
+
     return 0;
+}
+
+
+static void
+connection_dealloc(ConnectionObject *self)
+{
+    if (self->filters != NULL)
+        connection_clear(self);
+    Py_TYPE(self)->tp_free(self);
 }
 
 
@@ -1751,7 +1792,8 @@ connection_get_address(ConnectionObject *self, void *context)
     if (self->address == NULL)
         Py_RETURN_NONE;
 
-    return INCREF(self->address);
+    Py_INCREF(self->address);
+    return self->address;
 }
 
 
@@ -1774,7 +1816,8 @@ connection_get_loop(ConnectionObject *self, void *context)
     if (self->loop == NULL)
         Py_RETURN_NONE;
 
-    return INCREF(self->loop);
+    Py_INCREF(self->loop);
+    return self->loop;
 }
 
 
@@ -1810,7 +1853,7 @@ connection_get_unique_name(ConnectionObject *self, PyObject *args)
         Py_RETURN_NONE;
 
     if ((name = dbus_bus_get_unique_name(self->connection)) == NULL)
-        RETURN_ERROR("dbus_bus_get_unique_name() failed");
+        RAISE_ERROR("dbus_bus_get_unique_name() failed");
     return PyUnicode_FromString(name);
 
 error:
@@ -1830,6 +1873,7 @@ static PyGetSetDef connection_properties[] = \
                 connection_unique_name_doc },
     { NULL }
 };
+
 
 static DBusHandlerResult
 handler_callback(DBusConnection *connection, DBusMessage *message,
@@ -1861,6 +1905,7 @@ handler_callback(DBusConnection *connection, DBusMessage *message,
     Py_DECREF(Presult);
     return ret;
 }
+
 
 static DBusConnection *
 _open_connection(PyObject *bus, int shared)
@@ -1901,10 +1946,14 @@ _open_connection(PyObject *bus, int shared)
         }
         Py_END_ALLOW_THREADS
     } else
-        RETURN_ERROR("Expecting a bus address or well known bus id");
+        RAISE_ERROR("Expecting a bus address or well known bus id");
 
-    if (connection == NULL)
-        RETURN_ERROR_FROM_DBUS(error);
+    if (connection == NULL) {
+        if (dbus_error_is_set(&error))
+            RAISE_ERROR("dbus: %s", error.message); \
+        else
+            RAISE_ERROR("Unknown error");
+    }
 
     /* Should this be unconditionally set to FALSE? */
     dbus_connection_set_exit_on_disconnect(connection, FALSE);
@@ -1915,6 +1964,7 @@ _open_connection(PyObject *bus, int shared)
 error:
     return NULL;
 }
+
 
 static int
 _close_connection(ConnectionObject *conn)
@@ -1939,25 +1989,30 @@ _close_connection(ConnectionObject *conn)
                         NULL, NULL, NULL, NULL, NULL);
         dbus_connection_set_timeout_functions(conn->connection,
                         NULL, NULL, NULL, NULL, NULL);
-        DECREF_SET_NULL(conn->loop);
+        dbus_connection_set_dispatch_status_function(conn->connection,
+                        NULL, NULL, NULL);
+        Py_DECREF(conn->loop);
+        conn->loop = NULL;
     }
 
     if ((Piter = PyObject_GetIter(conn->filters)) == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     while ((Pitem = PyIter_Next(Piter)) != NULL) {
         dbus_connection_remove_filter(conn->connection, handler_callback,
                                       Pitem);
-        DECREF_SET_NULL(Pitem);
+        Py_DECREF(Pitem);
+        Pitem = NULL;
     }
     PySet_Clear(conn->filters);
 
     if ((Piter = PyObject_GetIter(conn->object_paths)) == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     while ((Pitem = PyIter_Next(Piter)) != NULL) {
         if (!dbus_connection_unregister_object_path(conn->connection,
                             PyUnicode_AsUTF8(Pitem)))
-            RETURN_ERROR("dbus_connection_unregister_object_path() failed");
-        DECREF_SET_NULL(Pitem);
+            RAISE_ERROR("dbus_connection_unregister_object_path() failed");
+        Py_DECREF(Pitem);
+        Pitem = NULL;
     }
     PyDict_Clear(conn->object_paths);
 
@@ -1972,7 +2027,8 @@ _close_connection(ConnectionObject *conn)
         dbus_connection_close(conn->connection);
     dbus_connection_unref(conn->connection);
     conn->connection = NULL;
-    DECREF_SET_NULL(conn->address);
+    Py_DECREF(conn->address);
+    conn->address = NULL;
     conn->shared = 0;
     return 0;
 
@@ -2002,36 +2058,40 @@ connection_get(PyTypeObject *cls, PyObject *args, PyObject *kwargs)
 
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|i:get", kwlist,
                                      &bus, &shared))
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
 
     if ((connection = _open_connection(bus, shared)) == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
 
     self = dbus_connection_get_data(connection, slot_self);
     if (self == NULL) {
          /* Create new python object, by calling tp_new and tp_init. */
         if ((Pargs = PyTuple_New(0)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         if ((self = (ConnectionObject *) cls->tp_new(cls, Pargs, NULL)) == NULL)
-            RETURN_ERROR(NULL);
-        DECREF_SET_NULL(Pargs);
+            RETURN_ERROR();
+        Py_DECREF(Pargs);
+        Pargs = NULL;
         /* We want to call the constructor here to allow derived classes to
          * do initialization, but we don't want our base constructor to connect
          * as we are already connected. The small hack below prevents that. */
         self->connection = connection;  /* hand over D-BUS reference */
         self->shared = shared;
-        self->address = INCREF(bus);
+        Py_INCREF(bus);
+        self->address = bus;
         self->skip_connect = 1;
         if ((Pargs = PyTuple_New(1)) == NULL)
-            RETURN_ERROR(NULL);
-        PyTuple_SET_ITEM(Pargs, 0, INCREF(bus));
+            RETURN_ERROR();
+        Py_INCREF(bus);
+        PyTuple_SET_ITEM(Pargs, 0, bus);
         if (cls->tp_init((PyObject *) self, Pargs, NULL) < 0)
-            RETURN_ERROR(NULL);
-        DECREF_SET_NULL(Pargs);
+            RETURN_ERROR();
+        Py_DECREF(Pargs);
+        Pargs = NULL;
         /* Hand off the tp_new() reference to the D-BUS connection.
          * Also see note in connection_init() */
         if (!dbus_connection_set_data(connection, slot_self, self, decref))
-            RETURN_ERROR("dbus_connection_set_data() failed");
+            RAISE_ERROR("dbus_connection_set_data() failed");
     }
 
     /* Need a new reference because even if the connection was just created,
@@ -2077,10 +2137,10 @@ connection_send(ConnectionObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "O!:send", &MessageType, &message))
         return NULL;
     if (self->connection == NULL)
-        RETURN_ERROR("not connected");
+        RAISE_ERROR("not connected");
 
     if (!dbus_connection_send(self->connection, message->message, NULL))
-        RETURN_ERROR("dbus_connection_send() failed");
+        RAISE_ERROR("dbus_connection_send() failed");
 
     Py_RETURN_NONE;
 
@@ -2120,6 +2180,7 @@ pending_call_notify_callback(DBusPendingCall *pending, void *data)
     dbus_pending_call_unref(pending);
 }
 
+
 static PyObject *
 connection_send_with_reply(ConnectionObject *self, PyObject *args)
 {
@@ -2132,14 +2193,14 @@ connection_send_with_reply(ConnectionObject *self, PyObject *args)
                           &message, &callback, &timeout))
         return NULL;
     if (self->connection == NULL)
-        RETURN_ERROR("not connected");
+        RAISE_ERROR("not connected");
 
     type = dbus_message_get_type(message->message);
     if ((type != DBUS_MESSAGE_TYPE_METHOD_CALL) && (callback != NULL))
-        RETURN_ERROR("expecting a METHOD_CALL message");
+        RAISE_ERROR("expecting a METHOD_CALL message");
 
     if (!PyCallable_Check(callback))
-        RETURN_ERROR("expecting a callable for 'callback'");
+        RAISE_ERROR("expecting a callable for 'callback'");
 
     if (timeout == NULL || timeout == Py_None)
         msecs = -1;
@@ -2148,15 +2209,15 @@ connection_send_with_reply(ConnectionObject *self, PyObject *args)
     else if (PyFloat_Check(timeout))
         msecs = (int) (1000.0 * PyFloat_AsDouble(timeout));
     else
-        RETURN_ERROR("expecing int, float or None for 'timeout'");
+        RAISE_ERROR("expecing int, float or None for 'timeout'");
     if (msecs < 0) msecs = -1;
 
     if (!dbus_connection_send_with_reply(self->connection,
                 message->message, &pending, msecs) || (pending == NULL))
-        RETURN_ERROR("dbus_connection_send_with_reply() failed");
+        RAISE_ERROR("dbus_connection_send_with_reply() failed");
     if (!dbus_pending_call_set_notify(pending, pending_call_notify_callback,
                                       callback, decref))
-        RETURN_MEMORY_ERROR();
+        RAISE_MEMORY_ERROR();
     Py_INCREF(callback);
 
     Py_RETURN_NONE;
@@ -2178,10 +2239,9 @@ connection_flush(ConnectionObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, ":flush"))
         return NULL;
     if (self->connection == NULL)
-        RETURN_ERROR("not connected");
+        RAISE_ERROR("not connected");
     dbus_connection_flush(self->connection);
-    Py_INCREF(Py_None);
-    return Py_None;
+    Py_RETURN_NONE;
 
 error:
     return NULL;
@@ -2192,7 +2252,7 @@ PyDoc_STRVAR(connection_dispatch_doc,
     "dispatch()\n\n"
     "Dispatch one incoming message, if available. Messages are dispatched\n"
     "in three steps. First, method call responses are dispatched to\n"
-    "callbacks that were registered iwth send(). Second, messages of any\n"
+    "callbacks that were registered with send(). Second, messages of any\n"
     "type are passed to the installed message filters, in the order the\n"
     "filters were added. Finally, for method calls, if there is a registered\n"
     "object path handler that matches the message's path, the message is\n"
@@ -2207,16 +2267,51 @@ connection_dispatch(ConnectionObject *self, PyObject *args)
 
     if (!PyArg_ParseTuple(args, ":dispatch"))
         return NULL;
-    if (self->connection == NULL) {
-        /* Don't raise an exception here. This function may be called
-         * from a callback that may be alive after the connection
-         * has been closed. */
-        Py_INCREF(Py_None);
-        return Py_None;
-    }
+    ASSERT(self->connection != NULL);
 
     status = dbus_connection_dispatch(self->connection);
     return PyLong_FromLong(status);
+
+error:
+    return NULL;
+}
+
+
+PyDoc_STRVAR(connection_dispatch_all_doc,
+    "dispatch_all()\n\n"
+    "Call dispatch() until no more dispatch data remains.\n");
+
+static PyObject *
+connection_dispatch_all(ConnectionObject *self, PyObject *args)
+{
+    int status;
+    PyObject *Pret;
+
+    if (!PyArg_ParseTuple(args, ":dispatch_all"))
+        return NULL;
+    ASSERT(self->connection != NULL);
+
+    while (1) {
+        status = dbus_connection_dispatch(self->connection);
+        if (status != DBUS_DISPATCH_DATA_REMAINS)
+            break;
+        else if (status == DBUS_DISPATCH_NEED_MEMORY)
+            RAISE_MEMORY_ERROR();
+    }
+
+    if (self->dispatch != NULL) {
+        Pret = PyObject_CallMethod(self->dispatch, "cancel", NULL);
+        if (PyErr_Occurred())
+            PyErr_Clear();
+        Py_XDECREF(Pret);
+        Py_DECREF(self->dispatch);
+        self->dispatch = NULL;
+    }
+
+    Py_RETURN_NONE;
+
+error:
+    return NULL;
 }
 
 
@@ -2239,7 +2334,7 @@ connection_read_write_dispatch(ConnectionObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "|O:read_write_dispatch", &timeout))
         return NULL;
     if (self->connection == NULL)
-        RETURN_ERROR("not connected");
+        RAISE_ERROR("not connected");
 
     if (timeout == NULL || timeout == Py_None)
         msecs = 0;
@@ -2248,7 +2343,7 @@ connection_read_write_dispatch(ConnectionObject *self, PyObject *args)
     else if (PyFloat_Check(timeout))
         msecs = (int) (1000.0 * PyFloat_AsDouble(timeout));
     else
-        RETURN_ERROR("expecing int, float or None for 'timeout'");
+        RAISE_ERROR("expecing int, float or None for 'timeout'");
     if (msecs < 0) msecs = -1;
 
     status = dbus_connection_read_write_dispatch(self->connection, msecs);
@@ -2259,23 +2354,18 @@ error:
 }
 
 
-PyDoc_STRVAR(connection_set_loop_doc,
-    "set_loop(loop)\n\n"
-    "Enable event loop integration for this connection. The *loop*\n"
-    "parameter must be an :class:`looping.EventLoop` instance.\n");
-
 static dbus_bool_t
 add_watch_callback(DBusWatch *watch, void *data)
 {
     int fd, flags, enabled;
     WatchObject *Pwatch = NULL;
-    PyObject *Pcallback = NULL, *Pdcall, *loop = (PyObject *) data;
+    PyObject *Pcallback = NULL, *Phandler, *loop = (PyObject *) data;
 
     ASSERT(dbus_watch_get_data(watch) == NULL);
 
     Pwatch = (WatchObject *) WatchType.tp_new(&WatchType, NULL, NULL);
     if (Pwatch == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     Pwatch->watch = watch;
     dbus_watch_set_data(watch, Pwatch, decref);  /* hand off ref to dbus */
 
@@ -2287,21 +2377,21 @@ add_watch_callback(DBusWatch *watch, void *data)
 
     Pcallback = PyObject_GetAttrString((PyObject *) Pwatch, "handle");
     if (Pcallback == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
 
     if (enabled && (flags & DBUS_WATCH_READABLE)) {
-        Pdcall = PyObject_CallMethod(loop, "add_reader", "iOi", fd, Pcallback,
+        Phandler = PyObject_CallMethod(loop, "add_reader", "iOi", fd, Pcallback,
                                      DBUS_WATCH_READABLE);
-        if (Pdcall == NULL)
-            RETURN_ERROR(NULL);
-        Pwatch->reader = Pdcall;  /* hand off reference */
+        if (Phandler == NULL)
+            RETURN_ERROR();
+        Pwatch->reader = Phandler;  /* hand off reference */
     }
     if ((flags & DBUS_WATCH_WRITABLE) && enabled) {
-        Pdcall = PyObject_CallMethod(loop, "add_writer", "iOi", fd, Pcallback,
+        Phandler = PyObject_CallMethod(loop, "add_writer", "iOi", fd, Pcallback,
                                      DBUS_WATCH_WRITABLE);
-        if (Pdcall == NULL)
-            RETURN_ERROR(NULL);
-        Pwatch->writer = Pdcall;  /* hand off reference */
+        if (Phandler == NULL)
+            RETURN_ERROR();
+        Pwatch->writer = Phandler;  /* hand off reference */
     }
 
     Py_DECREF(Pcallback);
@@ -2309,9 +2399,10 @@ add_watch_callback(DBusWatch *watch, void *data)
 
 error:
     Py_XDECREF(Pcallback);
-    PRINT_AND_CLEAR_IF_ERROR("add_watch_callback()");
+    PRINT_AND_CLEAR_ERROR("add_watch_callback()");
     return FALSE;
 }
+
 
 static void
 remove_watch_callback(DBusWatch *watch, void *data)
@@ -2330,27 +2421,30 @@ remove_watch_callback(DBusWatch *watch, void *data)
     if (Pwatch->reader != NULL) {
         Pret = PyObject_CallMethod(loop, "remove_reader", "i", fd);
         Py_XDECREF(Pret);  /* print error on Pret == NULL below */
-        DECREF_SET_NULL(Pwatch->reader);
+        Py_DECREF(Pwatch->reader);
+        Pwatch->reader = NULL;
     }
     if (Pwatch->writer != NULL) {
         Pret = PyObject_CallMethod(loop, "remove_writer", "i", fd);
         Py_XDECREF(Pret);  /* print error on Pret == NULL below */
-        DECREF_SET_NULL(Pwatch->writer);
+        Py_DECREF(Pwatch->writer);
+        Pwatch->writer = NULL;
     }
 
     dbus_watch_set_data(watch, NULL, NULL);  /* drops ref to Pwatch */
     /* fall through */
 
 error:
-    PRINT_AND_CLEAR_IF_ERROR("remove_watch_callback()");
+    PRINT_AND_CLEAR_ERROR("remove_watch_callback()");
 }
+
 
 static void
 watch_toggled_callback(DBusWatch *watch, void *data)
 {
     int fd, flags, enabled;
     WatchObject *Pwatch;
-    PyObject *Pcallback = NULL, *Pdcall, *Pret, *loop = (PyObject *) data;
+    PyObject *Pcallback = NULL, *Phandler, *Pret, *loop = (PyObject *) data;
 
     Pwatch = dbus_watch_get_data(watch);
     ASSERT(Pwatch != NULL);
@@ -2363,38 +2457,40 @@ watch_toggled_callback(DBusWatch *watch, void *data)
 
     Pcallback = PyObject_GetAttrString((PyObject *) Pwatch, "handle");
     if (Pcallback == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
 
     if (enabled && (flags & DBUS_WATCH_READABLE)) {
         if (Pwatch->reader == NULL) {
-            Pdcall = PyObject_CallMethod(loop, "add_reader", "iOi", fd,
+            Phandler = PyObject_CallMethod(loop, "add_reader", "iOi", fd,
                                          Pcallback, DBUS_WATCH_READABLE);
-            if (Pdcall == NULL)
-                RETURN_ERROR(NULL);
-            Pwatch->reader = Pdcall;  /* hand over reference */
+            if (Phandler == NULL)
+                RETURN_ERROR();
+            Pwatch->reader = Phandler;  /* hand over reference */
         }
     } else  {
         if (Pwatch->reader != NULL) {
             Pret = PyObject_CallMethod(loop, "remove_reader", "i", fd);
             if (Pret == NULL)
-                RETURN_ERROR(NULL);
-            DECREF_SET_NULL(Pwatch->reader);
+                RETURN_ERROR();
+            Py_DECREF(Pwatch->reader);
+            Pwatch->reader = NULL;
         }
     }
     if (enabled && (flags & DBUS_WATCH_WRITABLE)) {
         if (Pwatch->writer == NULL) {
-            Pdcall = PyObject_CallMethod(loop, "add_writer", "iOi", fd,
+            Phandler = PyObject_CallMethod(loop, "add_writer", "iOi", fd,
                                          Pcallback, DBUS_WATCH_WRITABLE);
-            if (Pdcall == NULL)
-                RETURN_ERROR(NULL);
-            Pwatch->writer = Pdcall;  /* hand off reference */
+            if (Phandler == NULL)
+                RETURN_ERROR();
+            Pwatch->writer = Phandler;  /* hand off reference */
         }
     } else  {
         if (Pwatch->writer != NULL) {
             Pret = PyObject_CallMethod(loop, "remove_writer", "i", fd);
             if (Pret == NULL)
-                RETURN_ERROR(NULL);
-            DECREF_SET_NULL(Pwatch->writer);
+                RETURN_ERROR();
+            Py_DECREF(Pwatch->writer);
+            Pwatch->writer = NULL;
         }
     }
 
@@ -2403,8 +2499,9 @@ watch_toggled_callback(DBusWatch *watch, void *data)
 
 error:
     Py_XDECREF(Pcallback);
-    PRINT_AND_CLEAR_IF_ERROR("watch_toggled_callback()");
+    PRINT_AND_CLEAR_ERROR("watch_toggled_callback()");
 }
+
 
 static dbus_bool_t
 add_timeout_callback(DBusTimeout *timeout, void *data)
@@ -2412,13 +2509,13 @@ add_timeout_callback(DBusTimeout *timeout, void *data)
     int enabled;
     float interval;
     TimeoutObject *Ptimeout;
-    PyObject *Pcallback = NULL, *Pdcall, *loop = (PyObject *) data;
+    PyObject *Pcallback = NULL, *Ptimer, *loop = (PyObject *) data;
 
     ASSERT(dbus_timeout_get_data(timeout) == NULL);
 
     Ptimeout = (TimeoutObject *) TimeoutType.tp_new(&TimeoutType, NULL, NULL);
     if (Ptimeout == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     Ptimeout->timeout = timeout;
     /* Hand off Ptimeout reference to dbus. */
     dbus_timeout_set_data(timeout, Ptimeout, decref);
@@ -2427,23 +2524,25 @@ add_timeout_callback(DBusTimeout *timeout, void *data)
     if (enabled) {
         Pcallback = PyObject_GetAttrString((PyObject *) Ptimeout, "handle");
         if (Pcallback == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         interval = (float) dbus_timeout_get_interval(timeout) / 1000.0;
-        Pdcall = PyObject_CallMethod(loop, "call_repeatedly", "fO", interval,
+        Ptimer = PyObject_CallMethod(loop, "call_repeatedly", "fO", interval,
                                      Pcallback);
-        if (Pdcall == NULL)
-            RETURN_ERROR(NULL);
-        Ptimeout->dcall = Pdcall;
-        DECREF_SET_NULL(Pcallback);
+        if (Ptimer == NULL)
+            RETURN_ERROR();
+        Ptimeout->timer = Ptimer;
+        Py_DECREF(Pcallback);
+        Pcallback = NULL;
     }
 
     return TRUE;
 
 error:
     Py_XDECREF(Pcallback);
-    PRINT_AND_CLEAR_IF_ERROR("add_timeout_callback()");
+    PRINT_AND_CLEAR_ERROR("add_timeout_callback()");
     return FALSE;
 }
+
 
 static void
 remove_timeout_callback(DBusTimeout *timeout, void *data)
@@ -2453,14 +2552,15 @@ remove_timeout_callback(DBusTimeout *timeout, void *data)
 
     Ptimeout = dbus_timeout_get_data(timeout);
     ASSERT(Ptimeout != NULL);
-    Pret = PyObject_CallMethod(Ptimeout->dcall, "cancel", "");
+    Pret = PyObject_CallMethod(Ptimeout->timer, "cancel", NULL);
     Py_XDECREF(Pret);  /* print error Pret == NULL below */
     dbus_timeout_set_data(timeout, NULL, NULL);  /* drops ref to Ptimeout */
     /* fallthrough */
 
 error:
-    PRINT_AND_CLEAR_IF_ERROR("remove_timeout_callback()");
+    PRINT_AND_CLEAR_ERROR("remove_timeout_callback()");
 }
+
 
 static void
 timeout_toggled_callback(DBusTimeout *timeout, void *data)
@@ -2468,32 +2568,36 @@ timeout_toggled_callback(DBusTimeout *timeout, void *data)
     int enabled;
     float interval;
     TimeoutObject *Ptimeout;
-    PyObject *Pdcall, *Pret = NULL, *Pcallback = NULL;
+    PyObject *Ptimer, *Pret = NULL, *Pcallback = NULL;
     PyObject *loop = (PyObject *) data;
 
     Ptimeout = dbus_timeout_get_data(timeout);
     ASSERT(Ptimeout != NULL);
+    ASSERT(Ptimeout->timer != NULL);
 
     /* First disable the current timer... */
-    Pret = PyObject_CallMethod(Ptimeout->dcall, "cancel", "");
+    Pret = PyObject_CallMethod(Ptimeout->timer, "cancel", NULL);
     if (Pret == NULL)
-        RETURN_ERROR(NULL);
-    DECREF_SET_NULL(Pret);
-    DECREF_SET_NULL(Ptimeout->dcall);
+        RETURN_ERROR();
+    Py_DECREF(Pret);
+    Pret = NULL;
+    Py_DECREF(Ptimeout->timer);
+    Ptimeout->timer = NULL;
 
     /* And conditonally create a new one... */
     enabled = dbus_timeout_get_enabled(timeout);
     if (enabled) {
         Pcallback = PyObject_GetAttrString((PyObject *) Ptimeout, "handle");
         if (Pcallback == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         interval = (float) dbus_timeout_get_interval(timeout) / 1000.0;
-        Pdcall = PyObject_CallMethod(loop, "call_repeatedly", "fO",
+        Ptimer = PyObject_CallMethod(loop, "call_repeatedly", "fO",
                                      interval, Pcallback);
-        if (Pdcall == NULL)
-            RETURN_ERROR(NULL);
-        Ptimeout->dcall = Pdcall;  /* hand off reference */
-        DECREF_SET_NULL(Pcallback);
+        if (Ptimer == NULL)
+            RETURN_ERROR();
+        Ptimeout->timer = Ptimer;  /* hand off reference */
+        Py_DECREF(Pcallback);
+        Pcallback = NULL;
     }
 
     return;
@@ -2501,45 +2605,98 @@ timeout_toggled_callback(DBusTimeout *timeout, void *data)
 error:
     Py_XDECREF(Pcallback);
     Py_XDECREF(Pret);
-    PRINT_AND_CLEAR_IF_ERROR("timeout_toggled_callback()");
+    PRINT_AND_CLEAR_ERROR("timeout_toggled_callback()");
 }
+
+
+static void
+dispatch_status_callback(DBusConnection *connection, DBusDispatchStatus status,
+                         void *data)
+{
+    ConnectionObject *Pconn;
+    PyObject *Pcb = NULL;
+
+    Pconn = (ConnectionObject *) dbus_connection_get_data(connection, slot_self);
+    ASSERT(Pconn != NULL);
+    ASSERT(Pconn->loop != NULL);
+    if (Pconn->dispatch != NULL)
+        return;  /* Already dispatching. */
+
+    Pcb = PyObject_GetAttrString((PyObject *) Pconn, "dispatch_all");
+    if (Pcb == NULL)
+        RETURN_ERROR();
+    Pconn->dispatch = PyObject_CallMethod(Pconn->loop, "call_soon", "O", Pcb);
+    /* Reference to Pcb will be dropped by dispatch_all(). */
+
+error:
+    Py_XDECREF(Pcb);
+    PRINT_AND_CLEAR_ERROR("dispatch_status_callback()");
+}
+
+
+PyDoc_STRVAR(connection_set_loop_doc,
+    "set_loop(loop)\n\n"
+    "Enable event loop integration for this connection. The *loop*\n"
+    "parameter must be an :class:`looping.EventLoop` instance.\n");
 
 static PyObject *
 connection_set_loop(ConnectionObject *self, PyObject *args)
 {
-    PyObject *loop;
+    PyObject *loop, *Pcb = NULL;
 
     if (!PyArg_ParseTuple(args, "O:set_loop", &loop))
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
+
     if (self->connection == NULL)
-        RETURN_ERROR("not connected");
+        RAISE_ERROR("not connected");
     if (self->loop != NULL)
-        RETURN_ERROR("an event loop is already installed");
+        RAISE_ERROR("an event loop is already installed");
+    ASSERT(self->dispatch == NULL);
 
     if (!PyObject_HasAttrString(loop, "add_reader") ||
                 !PyObject_HasAttrString(loop, "remove_reader") ||
                 !PyObject_HasAttrString(loop, "add_writer") ||
                 !PyObject_HasAttrString(loop, "remove_writer") ||
+                !PyObject_HasAttrString(loop, "call_soon") ||
                 !PyObject_HasAttrString(loop, "call_repeatedly"))
-        RETURN_ERROR("expecting an looping.EventLoop like object");
+        RAISE_ERROR("expecting a looping.EventLoop like object");
 
-    self->loop = INCREF(loop);
+    Py_INCREF(loop);
+    self->loop = loop;
 
     if (!dbus_connection_set_watch_functions(self->connection,
             add_watch_callback, remove_watch_callback,
             watch_toggled_callback, self->loop, decref))
-        RETURN_ERROR("dbus_connection_set_watch_functions() failed");
+        RAISE_ERROR("dbus_connection_set_watch_functions() failed");
     Py_INCREF(self->loop);
 
     if (!dbus_connection_set_timeout_functions(self->connection,
             add_timeout_callback, remove_timeout_callback,
             timeout_toggled_callback, self->loop, decref))
-        RETURN_ERROR("dbus_connection_set_watch_functions() failed");
+        RAISE_ERROR("dbus_connection_set_watch_functions() failed");
     Py_INCREF(self->loop);
+
+    dbus_connection_set_dispatch_status_function(self->connection,
+                dispatch_status_callback, NULL, NULL);
+    
+    /* Schedule a call to dispatch_all() now if the current dispatch status
+     * is DBUS_DISPATCH_DATA_REMAINS. The DBUS dispatch status function API
+     * is edge trigered so it only fires on status changes. */
+
+    if (dbus_connection_get_dispatch_status(self->connection)
+                == DBUS_DISPATCH_DATA_REMAINS) {
+        Pcb = PyObject_GetAttrString((PyObject *) self, "dispatch_all");
+        if (Pcb == NULL)
+            RETURN_ERROR();
+        self->dispatch = PyObject_CallMethod(self->loop, "call_soon",
+                                             "O", Pcb);
+        /* Reference to Pcb will be dropped by dispatch_all(). */
+    }
 
     Py_RETURN_NONE;
 
 error:
+    Py_XDECREF(Pcb);
     return NULL;
 }
 
@@ -2562,21 +2719,21 @@ connection_add_filter(ConnectionObject *self, PyObject *args)
     PyObject *filter;
 
     if (!PyArg_ParseTuple(args, "O:add_filter", &filter))
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     if (!PyCallable_Check(filter))
-        RETURN_ERROR("expecting a Python callable");
+        RAISE_ERROR("expecting a Python callable");
 
     if (self->connection == NULL)
-        RETURN_ERROR("not connected");
+        RAISE_ERROR("not connected");
     if ((found = PySet_Contains(self->filters, filter)) < 0)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     if (!found) {
         if (!dbus_connection_add_filter(self->connection, handler_callback,
                                         filter, decref))
-            RETURN_ERROR("dbus_connection_add_filter() failed");
+            RAISE_ERROR("dbus_connection_add_filter() failed");
         Py_INCREF(filter);
         if (PySet_Add(self->filters, filter) < 0)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
     }
     Py_RETURN_NONE;
 
@@ -2597,19 +2754,19 @@ connection_remove_filter(ConnectionObject *self, PyObject *args)
     PyObject *filter;
 
     if (!PyArg_ParseTuple(args, "O:remove_filter", &filter))
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     if (!PyCallable_Check(filter))
-        RETURN_ERROR("expecting a Python callable");
+        RAISE_ERROR("expecting a Python callable");
 
     if (self->connection == NULL)
-        RETURN_ERROR("not connected");
+        RAISE_ERROR("not connected");
     if ((found = PySet_Contains(self->filters, filter)) < 0)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     if (!found)
-        RETURN_ERROR("no such filter");
+        RAISE_ERROR("no such filter");
     dbus_connection_remove_filter(self->connection, handler_callback, filter);
     if (PySet_Discard(self->filters, filter) < 0)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
 
     Py_RETURN_NONE;
 
@@ -2653,14 +2810,14 @@ connection_register_object_path(ConnectionObject *self,
                           &fallback))
         return NULL;
     if (!_check_path(path))
-        RETURN_ERROR("invalid path");
+        RAISE_ERROR("invalid path");
     if (!PyCallable_Check(handler))
-        RETURN_ERROR("expecting a Python callable");
+        RAISE_ERROR("expecting a Python callable");
 
     if (self->connection == NULL)
-        RETURN_ERROR("not connected");
+        RAISE_ERROR("not connected");
     if ((vtable = calloc(1, sizeof (DBusObjectPathVTable))) == NULL)
-        RETURN_MEMORY_ERROR();
+        RAISE_MEMORY_ERROR();
     vtable->message_function = handler_callback;
     vtable->unregister_function = decref_vtable;
     if (fallback)
@@ -2669,14 +2826,18 @@ connection_register_object_path(ConnectionObject *self,
     else
         ret = dbus_connection_try_register_object_path(self->connection, path,
                             vtable, handler, &error);
-    if (!ret)
-        RETURN_ERROR_FROM_DBUS(error);
+    if (!ret) {
+        if (dbus_error_is_set(&error))
+            RAISE_ERROR("dbus: %s", error.message);
+        else
+            RAISE_ERROR("Unknown error");
+    }
     Py_INCREF(handler);
     free(vtable); vtable = NULL;
     if ((Ppath = PyUnicode_FromString(path)) == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     if (PyDict_SetItem(self->object_paths, Ppath, handler) < 0)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     Py_DECREF(Ppath); Ppath = NULL;
 
     Py_RETURN_NONE;
@@ -2705,20 +2866,20 @@ connection_unregister_object_path(ConnectionObject *self,
     if (!PyArg_ParseTuple(args, "s:unregister_object_path", &path))
         return NULL;
     if (!_check_path(path))
-        RETURN_ERROR("invalid path");
+        RAISE_ERROR("invalid path");
 
     if (self->connection == NULL)
-        RETURN_ERROR("not connected");
+        RAISE_ERROR("not connected");
     if ((Ppath = PyUnicode_FromString(path)) == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     if ((found = PyDict_Contains(self->object_paths, Ppath)) < 0)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     if (!found)
-        RETURN_ERROR("no such object path");
+        RAISE_ERROR("no such object path");
     if (!dbus_connection_unregister_object_path(self->connection, path))
-        RETURN_ERROR("dbus_connection_unregister_object_path() failed");
+        RAISE_ERROR("dbus_connection_unregister_object_path() failed");
     if (PyDict_DelItem(self->object_paths, Ppath) < 0)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     Py_DECREF(Ppath);
 
     Py_RETURN_NONE;
@@ -2743,6 +2904,8 @@ static PyMethodDef connection_methods[] = \
             connection_flush_doc },
     { "dispatch", (PyCFunction) connection_dispatch, METH_VARARGS,
             connection_dispatch_doc },
+    { "dispatch_all", (PyCFunction) connection_dispatch_all, METH_VARARGS,
+            connection_dispatch_all_doc },
     { "read_write_dispatch", (PyCFunction) connection_read_write_dispatch,
             METH_VARARGS, connection_read_write_dispatch_doc },
     { "set_loop", (PyCFunction) connection_set_loop, METH_VARARGS,
@@ -2883,23 +3046,23 @@ split_signature(PyObject *self, PyObject *args)
         return NULL;
 
     if ((Plist = PyList_New(0)) == NULL)
-        RETURN_ERROR(NULL);
+        RETURN_ERROR();
     ptr = signature;
     while (*ptr != '\000') {
         end = get_one_full_type(ptr);
         if (end == NULL)
-            RETURN_ERROR("illegal signature string");
+            RAISE_ERROR("illegal signature string");
         if ((Pstr = PyUnicode_FromStringAndSize(ptr, end-ptr)) == NULL)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         if (PyList_Append(Plist, Pstr) < 0)
-            RETURN_ERROR(NULL);
+            RETURN_ERROR();
         Py_DECREF(Pstr); Pstr = NULL;
         ptr = end;
     }
     return Plist;
 
 error:
-    if (Pstr != NULL) Py_DECREF(Pstr);
+    Py_XDECREF(Pstr);
     return NULL;
 }
 

@@ -47,26 +47,10 @@ class Connection(dbusx.ConnectionBase):
         super(Connection, self).__init__(address)
         self.context = None
         self._registered = False
-        self._dispatcher = None
         self._signal_handlers = []
         self.logger = dbusx.util.getLogger('dbusx.Connection',
                                            context=str(self))
         self.local = self._local()
-
-    def set_loop(self, loop):
-        super(Connection, self).set_loop(loop)
-        self._dispatcher = loop.call_every_iteration(self.dispatch_all)
-
-    def close(self):
-        if self._dispatcher:
-            self._dispatcher.cancel()
-            self._dispatcher = None
-        super(Connection, self).close()
-
-    def dispatch_all(self):
-        """Dispatch until the dispatch queue is empty."""
-        while self.dispatch() == dbusx.DISPATCH_DATA_REMAINS:
-            pass
 
     def __str__(self):
         s = 'Connection(address=%s, shared=%s)' % (self.address, self.shared)
