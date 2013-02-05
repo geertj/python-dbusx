@@ -1,3 +1,4 @@
+language: nodefaults
 applications:
 -   name: platformtest
     vms:
@@ -9,3 +10,22 @@ applications:
         sysinit: "yum -y install dbus-devel dbus-x11"
     -   name: ubuntu1204
         sysinit: "apt-get update && apt-get install libdbus-1-dev"
+    prepare:
+    -   sudo pip install -r requirements.txt
+    -   python setup.py build
+    execute:
+    -   nosetests
+
+-   name: platformtest3
+    vms:
+    -   name: fedora16
+        sysinit: "yum -y install dbus-devel dbus-x11"
+    -   name: fedora17
+        sysinit: "yum -y install dbus-devel dbus-x11"
+    -   name: ubuntu1204
+        sysinit: "apt-get update && apt-get install libdbus-1-dev"
+    prepare:
+    -   sudo pip3 install -r requirements.txt
+    -   python3 setup.py build
+    execute:
+    -   nosetests3
