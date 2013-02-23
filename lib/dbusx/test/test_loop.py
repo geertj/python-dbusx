@@ -65,27 +65,6 @@ class TestWrappedObjectWithTulipLoop(UseLoop, TestWrappedObject):
     create_loop = staticmethod(create_tulip_loop)
 
 
-# PyEV (libev) loop
-
-def create_pyev_loop():
-    try:
-        import looping
-    except ImportError:
-        raise SkipTest('this test requires "looping"')
-    if not hasattr(looping, 'PyEVEventLoop'):
-        raise SkipTest('this test requires "pyev"')
-    return looping.PyEVEventLoop()
-
-class TestConnectionWithPyEVLoop(UseLoop, TestConnection):
-    create_loop = staticmethod(create_pyev_loop)
-
-class TestObjectWithPyEVLoop(UseLoop, TestObject):
-    create_loop = staticmethod(create_pyev_loop)
-
-class TestWrappedObjectWithPyEVLoop(UseLoop, TestWrappedObject):
-    create_loop = staticmethod(create_pyev_loop)
-
-
 # PyUV (libuv) loop
 
 def create_pyuv_loop():
