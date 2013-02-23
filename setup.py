@@ -58,14 +58,14 @@ def pkgconfig(*args):
     return str(output.decode('ascii')).strip().split()
 
 
-setup(
-    package_dir = { '': 'lib' },
-    packages = ['dbusx', 'dbusx.test'],
-    ext_modules = [Extension('dbusx._dbus', ['lib/dbusx/_dbus.c'],
-              extra_compile_args = pkgconfig('--cflags', 'dbus-1'),
-              extra_link_args =  pkgconfig('--libs', 'dbus-1'))],
-    requires = ['six'],
-    install_requires = ['setuptools'],
-    test_suite = 'nose.collector',
-    **version_info
-)
+if __name__ == '__main__':
+    setup(
+        package_dir = { '': 'lib' },
+        packages = ['dbusx', 'dbusx.test'],
+        ext_modules = [Extension('dbusx._dbus', ['lib/dbusx/_dbus.c'],
+                  extra_compile_args = pkgconfig('--cflags', 'dbus-1'),
+                  extra_link_args =  pkgconfig('--libs', 'dbus-1'))],
+        install_requires = ['six', 'setuptools'],
+        test_suite = 'nose.collector',
+        **version_info
+    )
