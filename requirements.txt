@@ -1,1 +1,3 @@
 six==1.2.0
+https://github.com/saghul/pyuv/archive/release-0.9.6.tar.gz
+looping==0.2
