@@ -13,7 +13,7 @@ from setuptools import setup, Extension
 
 version_info = {
     'name': 'python-dbusx',
-    'version': '0.8',
+    'version': '0.9',
     'description': 'An alternate interface to D-BUS supporting evented IO',
     'author': 'Geert Jansen',
     'author_email': 'geertj@gmail.com',
